@@ -1,0 +1,34 @@
+{
+  "name": "ceres-ebaf-toa-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@carbonplan/colormaps": "^4.0.0",
+    "@carbonplan/components": "^13.4.0",
+    "@carbonplan/icons": "^2.0.0",
+    "@carbonplan/zarr-layer": "^0.8.0",
+    "@protomaps/basemaps": "^5.0.1",
+    "icechunk-js": "^0.6.0",
+    "maplibre-gl": "^5.24.0",
+    "next": "^16.2.6",
+    "pmtiles": "^4.3.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "theme-ui": "^0.17.4",
+    "zarrita": "^0.7.3",
+    "zustand": "^5.0.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.8.2"
+  }
+}
