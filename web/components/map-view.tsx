@@ -5,7 +5,7 @@ import { Box } from 'theme-ui'
 import maplibregl from 'maplibre-gl'
 import { Protocol } from 'pmtiles'
 import { layers, namedFlavor } from '@protomaps/basemaps'
-import { useThemedColormap } from '@carbonplan/colormaps'
+import { useOrientedColormap } from '@/lib/colormap'
 import { chunkMB, MAX_CHUNK_MB } from '@/lib/config'
 import { loadGeographicBounds, resolveCrs } from '@/lib/crs'
 import { computeDiff, DIFF_PATH, diffStore } from '@/lib/diff'
@@ -167,7 +167,7 @@ export default function MapView({
   const hoverQueryEnabled = useAppStore((s) => s.hoverQueryEnabled)
   const activeZone = useAppStore((s) => s.activeZone)
 
-  const colormap = useThemedColormap(colormapName, { format: 'hex' })
+  const colormap = useOrientedColormap(colormapName)
 
   const current = useMemo(
     () => arrays.find((a) => a.path === variable),
@@ -200,14 +200,23 @@ export default function MapView({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: buildStyle(dark),
-      center: [0, 15],
-      zoom: 1.4,
+      center: [-74, 40.7],
+      zoom: 3,
+      // Pane 1 only ever exists alongside pane 0, and both draw the same
+      // basemap, so one attribution covers the pair. Spread rather than pass
+      // `undefined`: the key being present at all suppresses the default
+      // control, which would drop the basemap attribution entirely.
+      ...(pane === 0 ? {} : { attributionControl: false as const }),
     })
     mapRef.current = map
-    map.addControl(
-      new maplibregl.NavigationControl({ showCompass: false }),
-      'bottom-right',
-    )
+    // Likewise one set of zoom buttons: the panes are camera-synced, so the
+    // pane 0 control drives both.
+    if (pane === 0) {
+      map.addControl(
+        new maplibregl.NavigationControl({ showCompass: false }),
+        'bottom-right',
+      )
+    }
     map.on('load', () => setMapReady(true))
     setMapInstance(pane, map)
 

@@ -2,8 +2,8 @@
 
 import { useMemo } from 'react'
 import { Box, Flex, Text } from 'theme-ui'
-import { useThemedColormap } from '@carbonplan/colormaps'
-import { chunkMB, formatValue, MAX_CHUNK_MB, units } from '@/lib/config'
+import { chunkMB, formatValue, labelOf, MAX_CHUNK_MB, units } from '@/lib/config'
+import { useOrientedColormap } from '@/lib/colormap'
 import { useAppStore } from '@/lib/store'
 
 /** Colorbar, variable caption and status readout, floating over one map pane. */
@@ -27,7 +27,7 @@ export default function Overlay({ pane }: { pane: number }) {
     [arrays, diffWith],
   )
 
-  const swatch = useThemedColormap(colormapName, { format: 'hex' }) as string[]
+  const swatch = useOrientedColormap(colormapName)
   const mb = current ? chunkMB(current) : 0
   const oversized = Boolean(storeReady && current && mb > MAX_CHUNK_MB && !force)
   const u = current ? units(current) : ''
@@ -95,12 +95,14 @@ export default function Overlay({ pane }: { pane: number }) {
                 fontSize: 0,
                 letterSpacing: 'mono',
                 color: 'text',
+                lineHeight: 1.3,
+                maxWidth: '320px',
                 mb: 1,
               }}
             >
               {other
-                ? `${current.name} \u2212 ${other.name}`
-                : `${pane === 0 ? 'A' : 'B'} \u00b7 ${current.name}`}
+                ? `${labelOf(current)} \u2212 ${labelOf(other)}`
+                : `${pane === 0 ? 'A' : 'B'} \u00b7 ${labelOf(current)}`}
             </Box>
           )}
           <Flex sx={{ height: '8px', mb: 1 }}>

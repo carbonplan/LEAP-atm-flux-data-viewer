@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { Box, Checkbox, Flex, Label as UILabel, useColorMode } from 'theme-ui'
+import { useEffect, useRef } from 'react'
+import { Box, Flex, useColorMode } from 'theme-ui'
 import type maplibregl from 'maplibre-gl'
 import { arraysFromStore } from '@/lib/store-schema'
 import { describeStoreError, getStore } from '@/lib/icechunk'
@@ -10,18 +10,6 @@ import { loadZarrLayer } from '@/lib/zarr-layer'
 import MapView from '@/components/map-view'
 import Sidebar from '@/components/sidebar'
 import Overlay from '@/components/overlay'
-
-const toggleSx = {
-  width: 'auto',
-  flexShrink: 0,
-  fontFamily: 'mono',
-  fontSize: 0,
-  letterSpacing: 'mono',
-  textTransform: 'uppercase',
-  color: 'secondary',
-  alignItems: 'center',
-  cursor: 'pointer',
-}
 
 /**
  * Keep two panes looking at the same place. Without this, a side-by-side
@@ -62,8 +50,9 @@ function useCameraSync(
 }
 
 export default function Viewer() {
-  const [globe, setGlobe] = useState(true)
-  const [dark, setDark] = useState(true)
+  // Owned by the store, driven by the sidebar's display row.
+  const globe = useAppStore((s) => s.globe)
+  const dark = useAppStore((s) => s.dark)
   const [, setColorMode] = useColorMode()
 
   useEffect(() => {
@@ -125,39 +114,6 @@ export default function Viewer() {
             <Overlay pane={1} />
           </Box>
         )}
-
-        {/* Display-only toggles, kept out of the control flow in the sidebar. */}
-        <Flex
-          sx={{
-            position: 'absolute',
-            top: 3,
-            right: 3,
-            gap: 3,
-            bg: 'background',
-            border: '1px solid',
-            borderColor: 'muted',
-            px: 2,
-            py: 1,
-            zIndex: 1,
-          }}
-        >
-          <UILabel sx={toggleSx}>
-            <Checkbox
-              checked={globe}
-              onChange={(e) => setGlobe(e.target.checked)}
-              sx={{ color: 'text', mr: 1 }}
-            />
-            Globe
-          </UILabel>
-          <UILabel sx={toggleSx}>
-            <Checkbox
-              checked={dark}
-              onChange={(e) => setDark(e.target.checked)}
-              sx={{ color: 'text', mr: 1 }}
-            />
-            Dark
-          </UILabel>
-        </Flex>
       </Flex>
     </Flex>
   )

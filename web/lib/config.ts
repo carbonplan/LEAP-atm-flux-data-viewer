@@ -67,7 +67,9 @@ export function isDiverging(v: ArrayMeta): boolean {
 export function defaultColormap(v: ArrayMeta): string {
   if (v.hints?.colormap) return v.hints.colormap
   if (isDiverging(v)) {
-    return /_cre_/.test(v.name) ? 'orangeblue' : 'redteal'
+    // Reversed: on a diverging ramp the warm end has to sit at the positive
+    // end, or an energy gain reads cool and a loss reads warm.
+    return /_cre_/.test(v.name) ? 'orangeblue_r' : 'redteal_r'
   }
   if (/^cldarea/.test(v.name)) return 'blues'
   if (/^cldtau/.test(v.name)) return 'greys'
@@ -123,6 +125,17 @@ export const LAB_VARS = [
 
 export const isLabVar = (v: ArrayMeta) => LAB_VARS.includes(v.name)
 
+/**
+ * Landing view, in preference order. `LAB_VARS` is an unordered allowlist, so
+ * without this the first render is decided by whatever order the store happens
+ * to list its arrays in. Net flux is the app's title subject.
+ */
+export const DEFAULT_VARS = [
+  'toa_net_all_mon',
+  'toa_albedo_all_mon',
+  'toa_lw_all_mon',
+]
+
 /** Sidebar grouping. CERES variable names are prefixed by measurement location. */
 export function groupOf(name: string): string {
   if (name.endsWith('_t_eff') || name.endsWith('_t_skin')) return 'Temperature'
@@ -156,12 +169,52 @@ const SKY_CONDITIONS: Array<[RegExp, string]> = [
   [/_all(_|$)/, 'all-sky'],
 ]
 
-function skyCondition(name: string): string | null {
+export function skyCondition(name: string): string | null {
   for (const [pattern, label] of SKY_CONDITIONS) {
     if (pattern.test(name)) return label
   }
   return null
 }
+
+/**
+ * The physical quantity a variable measures, read from its name.
+ *
+ * Units alone are too coarse to decide whether two variables can be subtracted:
+ * albedo and cloud area fraction are both "percent", but their difference means
+ * nothing. Order matters below — `toa_cre_sw_mon` has to match the CRE patterns
+ * before the bare `_sw_` one, and the `cld*` families before `temperature`.
+ */
+export function quantityKind(name: string): string {
+  if (/_cre_sw(_|$)/.test(name)) return 'cre-sw'
+  if (/_cre_lw(_|$)/.test(name)) return 'cre-lw'
+  if (/_cre_net(_|$)/.test(name)) return 'cre-net'
+  if (/albedo/.test(name)) return 'albedo'
+  if (/^cldarea/.test(name)) return 'cloud-fraction'
+  if (/^cldtau/.test(name)) return 'cloud-optical-depth'
+  if (/^cldpress/.test(name)) return 'cloud-pressure'
+  if (/^cldtemp/.test(name)) return 'cloud-temperature'
+  if (/_t_eff$|_t_skin$/.test(name)) return 'temperature'
+  if (/^solar/.test(name)) return 'solar'
+  if (/_net(_|$)/.test(name)) return 'net'
+  if (/_sw(_|$)/.test(name)) return 'sw'
+  if (/_lw(_|$)/.test(name)) return 'lw'
+  return 'other'
+}
+
+/**
+ * Kinds that are all radiative fluxes in W m-2, so cross-kind subtraction is
+ * still physical — outgoing longwave minus reflected shortwave is a legitimate
+ * energy-budget question, unlike albedo minus cloud fraction.
+ */
+export const RADIATIVE_FLUX_KINDS = new Set([
+  'sw',
+  'lw',
+  'net',
+  'solar',
+  'cre-sw',
+  'cre-lw',
+  'cre-net',
+])
 
 /**
  * Display label: the physical quantity, then the sky condition.

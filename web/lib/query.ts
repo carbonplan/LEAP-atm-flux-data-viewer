@@ -95,16 +95,22 @@ export function boundsToGeometry(bounds: BoundsLike): QueryGeometry {
 /**
  * Latitude zones the lab defines by name (Lab 1, p.5, "Terminology for this
  * class"): tropics 30S-30N, mid-latitudes 30-60, high latitudes poleward of 60.
+ * A few zones also carry `west`/`east` — Lab 2 Task 4 names two lon/lat boxes
+ * (western tropical Pacific, North Pacific) rather than latitude bands.
  *
- * Task 4c/4d ask for per-hemisphere min/max in January and July. Reading those
- * off a hand-panned viewport makes the numbers irreproducible between lab
- * partners, so the zones are fixed here and queried exactly rather than via
- * whatever the map happens to be showing.
+ * Reading region stats off a hand-panned viewport makes the numbers
+ * irreproducible between lab partners, so every zone the labs ask about is
+ * fixed here and queried exactly rather than via whatever the map happens to
+ * be showing.
  */
 export interface Zone {
   label: string
   south: number
   north: number
+  /** Longitude bounds, in degrees. Omitted = the full band (all longitudes).
+   * May wrap the antimeridian (west > east), e.g. Japan-to-Alaska. */
+  west?: number
+  east?: number
 }
 
 export const ZONES: Zone[] = [
@@ -116,19 +122,106 @@ export const ZONES: Zone[] = [
   { label: 'Mid-lat S', south: -60, north: -30 },
   { label: 'Arctic', south: 60, north: 90 },
   { label: 'Antarctic', south: -90, north: -60 },
+  // Lab 2 Task 4a: "western tropical Pacific (near Indonesia and northern
+  // Australia)". Sumatra to the Solomon Islands, equator-straddling.
+  { label: 'W. tropical Pacific', south: -10, north: 10, west: 95, east: 160 },
+  // Lab 2 Task 4b: "North Pacific (between Japan and Alaska)". Crosses the
+  // antimeridian, hence west (140E) > east (-130W) here.
+  { label: 'N. Pacific (Japan–Alaska)', south: 30, north: 60, west: 140, east: -130 },
 ]
 
-/** A full-longitude band as a query geometry. */
+/** `zone`'s longitude bounds, or null for the existing full-band zones. */
+function lonBounds(zone: Zone): { west: number; east: number } | null {
+  return zone.west != null && zone.east != null
+    ? { west: zone.west, east: zone.east }
+    : null
+}
+
+/**
+ * `zone` as a map camera target: [[west, south], [east, north]]. East is left
+ * unwrapped past 180 when the zone crosses the antimeridian (Japan-Alaska),
+ * same trick as the render geometry — maplibre's fitBounds reads a plain
+ * numeric span, so a wrapped east < west would fit the *wrong* (long) side
+ * of the globe.
+ *
+ * A full-band zone has no natural east/west, and fitting the literal -180/180
+ * span forces the camera to zoom out until the whole globe fits (since a
+ * sphere shows at most ~180 degrees of longitude at once, no zoom level
+ * satisfies a 360-degree request except "very far away"). Centered on
+ * wherever the camera already is instead, so the pan stays local and the
+ * zoom only has to satisfy the latitude span.
+ */
+export function zoneBounds(
+  zone: Zone,
+  currentLng = 0,
+): [[number, number], [number, number]] {
+  const lon = lonBounds(zone)
+  if (!lon) {
+    return [
+      [currentLng - 90, zone.south],
+      [currentLng + 90, zone.north],
+    ]
+  }
+  const { west, east } = lon
+  return [
+    [west, zone.south],
+    [east >= west ? east : east + 360, zone.north],
+  ]
+}
+
+/** A full-band or lon/lat-boxed zone as a query geometry, split at the
+ * antimeridian if the box wraps it. */
 export function zoneGeometry(zone: Zone): QueryGeometry {
+  const lon = lonBounds(zone)
+  if (!lon) {
+    return {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [-180, zone.south],
+          [-180, zone.north],
+          [180, zone.north],
+          [180, zone.south],
+          [-180, zone.south],
+        ],
+      ],
+    }
+  }
+  const { west, east } = lon
+  if (east >= west) {
+    return {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [west, zone.south],
+          [west, zone.north],
+          [east, zone.north],
+          [east, zone.south],
+          [west, zone.south],
+        ],
+      ],
+    }
+  }
   return {
-    type: 'Polygon',
+    type: 'MultiPolygon',
     coordinates: [
       [
-        [-180, zone.south],
-        [-180, zone.north],
-        [180, zone.north],
-        [180, zone.south],
-        [-180, zone.south],
+        [
+          [west, zone.south],
+          [west, zone.north],
+          [180, zone.north],
+          [180, zone.south],
+          [west, zone.south],
+        ],
+      ],
+      [
+        [
+          [-180, zone.south],
+          [-180, zone.north],
+          [east, zone.north],
+          [east, zone.south],
+          [-180, zone.south],
+        ],
       ],
     ],
   }
@@ -139,10 +232,46 @@ export function zoneGeometry(zone: Zone): QueryGeometry {
  * corners alone would be drawn as a geodesic under the globe projection, so a
  * line at 30N would bow toward the pole between them.
  */
-function parallel(lat: number, step = 5): [number, number][] {
+function parallel(lat: number, step = 2): [number, number][] {
   const points: [number, number][] = []
   for (let lon = -180; lon < 180; lon += step) points.push([lon, lat])
   points.push([180, lat])
+  return points
+}
+
+/**
+ * Points from `west` to `east` along latitude `lat`, going the direction that
+ * increases longitude — wrapping through 180 when `east < west` — stepped for
+ * the same globe-bowing reason as `parallel`.
+ *
+ * Longitude is left to run past +-180 rather than folded back into range: a
+ * fold turns a dateline crossing into a coordinate that jumps ~360 degrees
+ * between consecutive points, which earcut/line tessellation reads as a real
+ * edge spanning most of the map. Unwrapped values project to the same
+ * on-globe position and stay a short, continuous edge.
+ */
+function parallelBetween(
+  lat: number,
+  west: number,
+  east: number,
+  step = 2,
+): [number, number][] {
+  const span = east >= west ? east - west : 360 - west + east
+  const n = Math.max(1, Math.ceil(span / step))
+  const points: [number, number][] = []
+  for (let i = 0; i <= n; i++) {
+    const lon = west + (span * i) / n
+    points.push([lon, lat])
+  }
+  return points
+}
+
+/** A meridian traced with a vertex every `step` degrees of latitude, for the
+ * same globe-bowing reason as `parallel`. */
+function meridian(lon: number, south: number, north: number, step = 3): [number, number][] {
+  const points: [number, number][] = []
+  for (let lat = south; lat < north; lat += step) points.push([lon, lat])
+  points.push([lon, north])
   return points
 }
 
@@ -152,20 +281,37 @@ function bandRing(south: number, north: number): [number, number][] {
 }
 
 /**
- * The zone's boundary parallels. A polar zone has only one — its pole-side
- * edge collapses to a point, and drawing it produces a spiral through the pole.
+ * The zone's boundary. A full-band zone draws its one or two parallels (a
+ * polar zone has only one — its pole-side edge collapses to a point, and
+ * drawing it produces a spiral through the pole). A lon/lat box draws all
+ * four edges.
  */
 export function zoneOutlineGeometry(zone: Zone): GeoJSON.MultiLineString {
-  const lines: [number, number][][] = []
-  if (zone.south > -90) lines.push(parallel(zone.south))
-  if (zone.north < 90) lines.push(parallel(zone.north))
-  return { type: 'MultiLineString', coordinates: lines }
+  const lon = lonBounds(zone)
+  if (!lon) {
+    const lines: [number, number][][] = []
+    if (zone.south > -90) lines.push(parallel(zone.south))
+    if (zone.north < 90) lines.push(parallel(zone.north))
+    return { type: 'MultiLineString', coordinates: lines }
+  }
+  const { west, east } = lon
+  return {
+    type: 'MultiLineString',
+    coordinates: [
+      parallelBetween(zone.south, west, east),
+      parallelBetween(zone.north, west, east),
+      meridian(west, zone.south, zone.north),
+      meridian(east, zone.south, zone.north),
+    ],
+  }
 }
 
 /**
  * Everything *outside* the zone, so a translucent fill dims the rest of the
- * map. Built as the one or two latitude bands that flank the zone rather than
- * as the world with the zone punched out: for a polar zone that hole has a
+ * map. Built as the two or three regions that flank the zone — latitude caps
+ * above/below it, plus (for a box) the longitude slice at its own latitude
+ * that sits outside [west, east] — rather than as the world with the zone
+ * punched out as a hole: for a zone touching a pole that hole has a
  * zero-length edge along the pole, and earcut fans the degenerate ring into a
  * pinwheel across the cap.
  */
@@ -173,6 +319,19 @@ export function zoneMaskGeometry(zone: Zone): GeoJSON.MultiPolygon {
   const bands: [number, number][][][] = []
   if (zone.south > -90) bands.push([bandRing(-90, zone.south)])
   if (zone.north < 90) bands.push([bandRing(zone.north, 90)])
+  const lon = lonBounds(zone)
+  if (lon) {
+    // The complementary longitude arc — from `east` back around to `west` —
+    // is exactly "everything outside the box", by the same forward-wrapping
+    // convention `zoneGeometry` uses for the box itself.
+    const { west, east } = lon
+    const flank: [number, number][] = [
+      ...parallelBetween(zone.south, east, west),
+      ...parallelBetween(zone.north, east, west).reverse(),
+      [east, zone.south],
+    ]
+    bands.push([flank])
+  }
   return { type: 'MultiPolygon', coordinates: bands }
 }
 

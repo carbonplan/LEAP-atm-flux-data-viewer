@@ -2,7 +2,7 @@
 
 import { useMemo, useRef } from 'react'
 import { Box, Flex } from 'theme-ui'
-import { formatValue, units } from '@/lib/config'
+import { formatValue, labelOf, units } from '@/lib/config'
 import { valueKey } from '@/lib/diff'
 import { getSeries, seriesDim, seriesLength } from '@/lib/series'
 import { useAppStore } from '@/lib/store'
@@ -30,6 +30,7 @@ function PaneChart({ pane }: { pane: number }) {
   const paneState = useAppStore((s) => s.panes[pane])
   const setIndex = useAppStore((s) => s.setIndex)
   const compare = useAppStore((s) => s.mode === 'compare')
+  const zeroAnchored = useAppStore((s) => s.zeroAnchored)
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   const variable = arrays.find((a) => a.path === paneState.variable)
@@ -52,10 +53,15 @@ function PaneChart({ pane }: { pane: number }) {
   const values = points.map((p) => p.mean)
   const lo = Math.min(...values)
   const hi = Math.max(...values)
+  // Fitting the domain to the data makes a 66→68% wobble fill the box, which
+  // reads as a collapse. `zeroAnchored` pulls the domain back to zero so the
+  // variation is seen against the size of the quantity.
+  const domainLo = zeroAnchored ? Math.min(0, lo) : lo
+  const domainHi = zeroAnchored ? Math.max(0, hi) : hi
   // A flat series would divide by zero; give it a nominal band instead.
-  const pad = (hi - lo || Math.abs(hi) || 1) * 0.08
-  const yMin = lo - pad
-  const yMax = hi + pad
+  const pad = (domainHi - domainLo || Math.abs(domainHi) || 1) * 0.08
+  const yMin = domainLo - pad
+  const yMax = domainHi + pad
 
   const x = (i: number) => (length > 1 ? (i / (length - 1)) * W : 0)
   const y = (v: number) => H - ((v - yMin) / (yMax - yMin)) * H
@@ -81,12 +87,20 @@ function PaneChart({ pane }: { pane: number }) {
 
   return (
     <Box sx={{ mb: 3 }}>
-      <Flex sx={{ justifyContent: 'space-between', mb: 1 }}>
-        <Box sx={captionSx}>
+      <Flex sx={{ justifyContent: 'space-between', gap: 2, mb: 1 }}>
+        <Box
+          sx={{
+            ...captionSx,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {compare ? (pane === 0 ? 'A · ' : 'B · ') : ''}
-          {variable.name}
+          {labelOf(variable)}
         </Box>
-        <Box sx={{ ...captionSx, color: 'text' }}>
+        <Box sx={{ ...captionSx, color: 'text', flexShrink: 0 }}>
           {currentPoint
             ? `${formatValue(currentPoint.mean)} ${u}`.trim()
             : '—'}
@@ -165,16 +179,18 @@ function PaneChart({ pane }: { pane: number }) {
         </svg>
       </Box>
 
+      {/* Only the time axis sits under the chart. The y range used to live in
+          an identical row directly above this one, where it read as a second
+          x-axis; it is now named explicitly below. */}
       <Flex sx={{ justifyContent: 'space-between', mt: 1 }}>
-        <Box sx={captionSx}>{formatValue(lo)}</Box>
-        <Box sx={captionSx}>{u}</Box>
-        <Box sx={captionSx}>{formatValue(hi)}</Box>
-      </Flex>
-      <Flex sx={{ justifyContent: 'space-between' }}>
         <Box sx={captionSx}>{label(0)}</Box>
         <Box sx={captionSx}>{label(Math.floor((length - 1) / 2))}</Box>
         <Box sx={captionSx}>{label(length - 1)}</Box>
       </Flex>
+      <Box sx={{ ...captionSx, mt: 1 }}>
+        {`y: ${formatValue(yMin)} to ${formatValue(yMax)} ${u}`.trim()}
+        {zeroAnchored ? '' : ' (fitted)'}
+      </Box>
     </Box>
   )
 }

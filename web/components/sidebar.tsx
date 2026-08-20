@@ -44,9 +44,12 @@ const MODES: Array<[ViewMode, string]> = [
 function ModeSelect() {
   const mode = useAppStore((s) => s.mode)
   const setMode = useAppStore((s) => s.setMode)
+  // Has to apply the same allowlist DiffControls does, or Difference stays
+  // enabled while the B dropdown it opens is empty.
   const diffable = useAppStore((s) => {
     const a = s.arrays.find((v) => v.path === s.panes[0].variable)
-    return a ? diffCandidates(s.arrays, a).length > 0 : false
+    if (!a) return false
+    return diffCandidates(s.arrays, a).some((v) => s.showAll || isLabVar(v))
   })
 
   return (
@@ -58,7 +61,7 @@ function ModeSelect() {
             key={value}
             title={
               disabled
-                ? 'No other variable in this dataset shares these units'
+                ? 'Nothing in this dataset measures the same quantity, so there is nothing meaningful to subtract'
                 : undefined
             }
             sx={{
@@ -140,6 +143,56 @@ function PaneControls({ pane, advanced }: { pane: number; advanced: boolean }) {
       <VariableSelect pane={pane} />
       <ClimControl pane={pane} />
       {advanced && <ColormapSelect pane={pane} />}
+    </Box>
+  )
+}
+
+/**
+ * Display-only switches, gathered in one footer row. Globe and Dark used to
+ * float over the map, where in compare mode they sat on top of pane B and read
+ * as that pane's controls rather than the app's.
+ */
+function DisplayRow({
+  advanced,
+  setAdvanced,
+}: {
+  advanced: boolean
+  setAdvanced: (v: boolean) => void
+}) {
+  const globe = useAppStore((s) => s.globe)
+  const setGlobe = useAppStore((s) => s.setGlobe)
+  const dark = useAppStore((s) => s.dark)
+  const setDark = useAppStore((s) => s.setDark)
+
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Label>Display</Label>
+      <Flex sx={{ flexWrap: 'wrap', gap: 3 }}>
+        <UILabel sx={toggleSx}>
+          <Checkbox
+            checked={globe}
+            onChange={(e) => setGlobe(e.target.checked)}
+            sx={{ color: 'text', mr: 1 }}
+          />
+          Globe
+        </UILabel>
+        <UILabel sx={toggleSx}>
+          <Checkbox
+            checked={dark}
+            onChange={(e) => setDark(e.target.checked)}
+            sx={{ color: 'text', mr: 1 }}
+          />
+          Dark
+        </UILabel>
+        <UILabel sx={toggleSx}>
+          <Checkbox
+            checked={advanced}
+            onChange={(e) => setAdvanced(e.target.checked)}
+            sx={{ color: 'text', mr: 1 }}
+          />
+          Colormap
+        </UILabel>
+      </Flex>
     </Box>
   )
 }
@@ -233,16 +286,7 @@ export default function Sidebar() {
           <Divider />
           <QueryPanel />
           <Divider />
-          <Flex sx={{ mb: 2 }}>
-            <UILabel sx={toggleSx}>
-              <Checkbox
-                checked={advanced}
-                onChange={(e) => setAdvanced(e.target.checked)}
-                sx={{ color: 'text', mr: 1 }}
-              />
-              Colormap controls
-            </UILabel>
-          </Flex>
+          <DisplayRow advanced={advanced} setAdvanced={setAdvanced} />
         </>
       )}
     </Box>

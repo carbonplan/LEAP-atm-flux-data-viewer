@@ -1,5 +1,10 @@
 import * as zarr from 'zarrita'
-import { isSpatial, units } from '@/lib/config'
+import {
+  isSpatial,
+  quantityKind,
+  RADIATIVE_FLUX_KINDS,
+  units,
+} from '@/lib/config'
 import type { ArrayMeta } from '@/lib/store-schema'
 
 /**
@@ -20,6 +25,21 @@ export interface DiffSlice {
 /** Two variables can be subtracted only if they measure the same thing. */
 export function sameUnits(a: ArrayMeta, b: ArrayMeta): boolean {
   return units(a) === units(b)
+}
+
+/**
+ * Whether `a - b` means anything physically.
+ *
+ * Matching units is necessary but not sufficient: albedo and cloud area
+ * fraction are both "percent". Require the same quantity, or two quantities
+ * that are both radiative fluxes in W m-2.
+ */
+export function diffCompatible(a: ArrayMeta, b: ArrayMeta): boolean {
+  if (!sameUnits(a, b)) return false
+  const ka = quantityKind(a.name)
+  const kb = quantityKind(b.name)
+  if (ka === kb) return true
+  return RADIATIVE_FLUX_KINDS.has(ka) && RADIATIVE_FLUX_KINDS.has(kb)
 }
 
 /** Which key a pane's queryData result is filed under. */

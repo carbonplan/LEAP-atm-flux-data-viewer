@@ -78,7 +78,7 @@ export default function DimSliders() {
               step={1}
               value={index}
               onChange={(e) => setIndex(0, dim, Number(e.target.value))}
-              sx={{ color: 'text' }}
+              sx={{ color: 'primary' }}
             />
           </Box>
         )
@@ -105,7 +105,7 @@ export default function DimSliders() {
                   step={1}
                   value={index}
                   onChange={(e) => setIndex(1, dim, Number(e.target.value))}
-                  sx={{ color: 'text' }}
+                  sx={{ color: 'primary' }}
                 />
               </Box>
             )

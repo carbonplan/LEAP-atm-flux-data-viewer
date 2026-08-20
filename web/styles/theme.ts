@@ -15,8 +15,9 @@ export const theme: Theme = {
   fonts: {
     body: 'relative-book-pro, Roboto, system-ui, -apple-system, BlinkMacSystemFont',
     faux: 'relative-faux-book-pro, Roboto, system-ui, -apple-system, BlinkMacSystemFont',
+    // LEAP brand face, loaded in app/layout.tsx via next/font.
     heading:
-      'relative-medium-pro, Roboto, system-ui, -apple-system, BlinkMacSystemFont',
+      'var(--font-montserrat), relative-medium-pro, Roboto, system-ui, -apple-system, BlinkMacSystemFont',
     mono: 'relative-mono-11-pitch-pro, Menlo, monospace',
   },
   fontSizes: [12, 14, 16, 18, 24, 34, 48, 64, 80, 96, 128],
@@ -41,13 +42,24 @@ export const theme: Theme = {
   },
   // Dark is the root palette so the first paint is already dark; `light` is the
   // alternate mode behind the Dark toggle.
+  //
+  // LEAP's brand colors (Style Guide, Jan 2024) are specified for print and for
+  // light backgrounds: navy #012169 primary, green #00796B and light blue
+  // #B9D9EB secondary, grey #6D6E71 accent. Navy on a near-black background is
+  // unreadable, so the roles swap by mode — the light blue carries the brand on
+  // dark, the navy on light. The raw brand values stay available as tokens.
   colors: {
     text: '#f2f2f1',
     background: '#0a0a0a',
-    primary: '#f2f2f1',
+    // Interactive accent: hover, focus and selected states.
+    primary: '#B9D9EB',
     secondary: '#9a9a97',
     muted: '#3a3a3a',
     hinted: '#1c1c1c',
+    leapNavy: '#012169',
+    leapGreen: '#00796B',
+    leapBlue: '#B9D9EB',
+    leapGrey: '#6D6E71',
     red: '#f07071',
     orange: '#ea9755',
     yellow: '#d4c05e',
@@ -61,9 +73,14 @@ export const theme: Theme = {
       light: {
         text: '#1b1e23',
         background: '#FFFFFF',
-        primary: '#1b1e23',
-        secondary: '#808080',
-        muted: '#b9b9bb',
+        primary: '#012169',
+        // The brand's own accent grey, near-identical to the #808080 it
+        // replaces but official, and 4.8:1 on white.
+        secondary: '#6D6E71',
+        // A tint of the accent grey. The previous #b9b9bb sat at ~1.6:1 on
+        // white, so borders drawn with it — the sidebar divider, every
+        // dropdown, the colorbar box — effectively vanished in light mode.
+        muted: '#a8a9ac',
         hinted: '#f2f2f1',
       },
     },

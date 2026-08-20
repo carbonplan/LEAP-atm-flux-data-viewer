@@ -8,13 +8,16 @@ import type {
 import type { Zone } from '@/lib/query'
 import type { ArrayMeta } from '@/lib/store-schema'
 import {
+  DEFAULT_VARS,
   defaultClim,
   defaultColormap,
   isLabVar,
   isSpatial,
+  quantityKind,
   renderable,
+  skyCondition,
 } from '@/lib/config'
-import { sameUnits } from '@/lib/diff'
+import { diffCompatible } from '@/lib/diff'
 import { geometryKey, seriesDim, seriesLength, seriesSelector } from '@/lib/series'
 
 export type Selector = Record<
@@ -71,6 +74,12 @@ interface AppState {
   /** Escape hatch out of the LAB_VARS allowlist. */
   showAll: boolean
   hoverQueryEnabled: boolean
+  /** Display-only switches. In the store rather than in `Viewer` so the
+   * sidebar can own the controls while the maps consume the values. */
+  globe: boolean
+  dark: boolean
+  /** Anchor the series y-axis at zero instead of fitting it to the data. */
+  zeroAnchored: boolean
   /** Zone currently drawn on the map, and whose stats are on screen. */
   activeZone: Zone | null
   /** What the on-screen series covers, and whether one is in flight. */
@@ -98,6 +107,9 @@ interface AppState {
   setDiffWith: (path: string | null) => void
   setLinkTime: (linkTime: boolean) => void
   setShowAll: (showAll: boolean) => void
+  setGlobe: (globe: boolean) => void
+  setDark: (dark: boolean) => void
+  setZeroAnchored: (zeroAnchored: boolean) => void
   setHoverQueryEnabled: (enabled: boolean) => void
   setActiveZone: (zone: Zone | null) => void
   clearResults: () => void
@@ -134,18 +146,35 @@ function emptyPane(): PaneState {
 }
 
 /**
- * Variables that can be subtracted from `a`: same dataset group, same units,
- * and not `a` itself. Mixing units (albedo minus W m-2) is meaningless, so the
- * B dropdown is filtered rather than merely warned about.
+ * Variables that can be subtracted from `a`: same dataset group, not `a`
+ * itself, and measuring something a subtraction can be taken of. The B dropdown
+ * is filtered rather than merely warned about — see `diffCompatible`.
+ *
+ * Ordered so the same quantity in the opposite sky condition comes first, since
+ * every caller takes the head as its default: that makes the default difference
+ * an all-sky minus clear-sky, i.e. a cloud radiative effect, which is the
+ * comparison the labs actually ask for.
  */
 export function diffCandidates(arrays: ArrayMeta[], a: ArrayMeta): ArrayMeta[] {
-  return arrays.filter(
-    (v) =>
-      v.group === a.group &&
-      v.path !== a.path &&
-      renderable(v) &&
-      sameUnits(a, v),
-  )
+  const kindA = quantityKind(a.name)
+  const skyA = skyCondition(a.name)
+  const rank = (v: ArrayMeta) => {
+    const kind = quantityKind(v.name)
+    // Incoming solar is an input to the budget, not another outgoing flux, so
+    // it makes a poor default partner even though the units match.
+    if (kind === 'solar' && kindA !== 'solar') return 3
+    if (kind !== kindA) return 2
+    return skyCondition(v.name) !== skyA ? 0 : 1
+  }
+  return arrays
+    .filter(
+      (v) =>
+        v.group === a.group &&
+        v.path !== a.path &&
+        renderable(v) &&
+        diffCompatible(a, v),
+    )
+    .sort((x, y) => rank(x) - rank(y))
 }
 
 /** Reset clim, colormap and dim indices to whatever suits `v`. */
@@ -189,16 +218,22 @@ export const useAppStore = create<AppState>((set, get) => {
     linkTime: true,
     showAll: false,
     hoverQueryEnabled: false,
+    globe: true,
+    dark: true,
+    zeroAnchored: false,
     activeZone: null,
     seriesLabel: null,
     seriesLoading: false,
     lastPoint: null,
 
     setArrays: (arrays) => {
-      // Prefer a lab variable as the landing view; fall back to anything
-      // renderable so the app still works against an unrelated store.
+      // Land on a named default; then any lab variable; then anything
+      // renderable, so the app still works against an unrelated store.
       const renderables = arrays.filter(renderable)
-      const first = renderables.find(isLabVar) ?? renderables[0]
+      const preferred = DEFAULT_VARS.map((name) =>
+        renderables.find((v) => v.name === name),
+      ).find(Boolean)
+      const first = preferred ?? renderables.find(isLabVar) ?? renderables[0]
       if (!first) {
         set({ arrays })
         return
@@ -251,8 +286,8 @@ export const useAppStore = create<AppState>((set, get) => {
         return {
           ...p,
           ...derivedFor(match),
-          ...(b && sameUnits(match, b)
-            ? { diffWith: b.path, colormap: 'redteal' }
+          ...(b && diffCompatible(match, b)
+            ? { diffWith: b.path, colormap: 'redteal_r' }
             : {}),
         }
       }) as [PaneState, PaneState]
@@ -329,12 +364,12 @@ export const useAppStore = create<AppState>((set, get) => {
       const { arrays, panes } = get()
       const a = arrays.find((v) => v.path === panes[0].variable)
       const b = arrays.find((v) => v.path === path)
-      if (!a || !b || !sameUnits(a, b)) return
+      if (!a || !b || !diffCompatible(a, b)) return
       // A difference straddles zero by construction, so it only reads on a
       // diverging ramp. clim is replaced once the field has been computed.
       patch(0, {
         diffWith: path,
-        colormap: 'redteal',
+        colormap: 'redteal_r',
         pointResult: null,
         regionResult: null,
         seriesResult: null,
@@ -342,6 +377,9 @@ export const useAppStore = create<AppState>((set, get) => {
     },
     setLinkTime: (linkTime) => set({ linkTime }),
     setShowAll: (showAll) => set({ showAll }),
+    setGlobe: (globe) => set({ globe }),
+    setDark: (dark) => set({ dark }),
+    setZeroAnchored: (zeroAnchored) => set({ zeroAnchored }),
     setHoverQueryEnabled: (hoverQueryEnabled) => set({ hoverQueryEnabled }),
     setActiveZone: (activeZone) => set({ activeZone }),
 

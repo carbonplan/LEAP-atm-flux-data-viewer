@@ -3,12 +3,13 @@
 import { useMemo, useState } from 'react'
 import type { QueryGeometry } from '@carbonplan/zarr-layer'
 import { Box, Button, Checkbox, Flex, Label as UILabel, Text } from 'theme-ui'
-import { formatValue, units } from '@/lib/config'
+import { formatValue, labelOf, units } from '@/lib/config'
 import {
   boundsToGeometry,
   getPointValue,
   getRegionStats,
   ZONES,
+  zoneBounds,
   zoneGeometry,
   type Zone,
 } from '@/lib/query'
@@ -45,7 +46,10 @@ const buttonSx = {
   px: 2,
   py: 1,
   cursor: 'pointer',
-  '&:hover': { borderColor: 'text' },
+  '&:hover': { borderColor: 'primary' },
+  // These are plain <button>s with no ring of their own; without this a
+  // keyboard user cannot tell which zone they are on.
+  '&:focus-visible': { outline: 'none', borderColor: 'primary', color: 'primary' },
   '&:disabled': { cursor: 'default', opacity: 0.5 },
 }
 
@@ -69,6 +73,8 @@ export default function QueryPanel() {
   const seriesLabel = useAppStore((s) => s.seriesLabel)
   const lastPoint = useAppStore((s) => s.lastPoint)
   const diffMode = useAppStore((s) => s.mode === 'diff')
+  const zeroAnchored = useAppStore((s) => s.zeroAnchored)
+  const setZeroAnchored = useAppStore((s) => s.setZeroAnchored)
   // The geometry the region readout came from, so a series can re-run it over
   // the whole axis without the reader re-picking the region.
   const [regionGeometry, setRegionGeometry] = useState<QueryGeometry | null>(
@@ -96,8 +102,8 @@ export default function QueryPanel() {
           unit: variable ? units(variable) : '',
           name: variable
             ? other
-              ? `${variable.name} \u2212 ${other.name}`
-              : variable.name
+              ? `${labelOf(variable)} \u2212 ${labelOf(other)}`
+              : labelOf(variable)
             : '—',
           point: variable
             ? getPointValue(pane.pointResult, key, fillValue)
@@ -125,7 +131,27 @@ export default function QueryPanel() {
     }
   }
 
-  const handleZone = (zone: Zone) => run(zone, zoneGeometry(zone))
+  // Camera is driven off pane 0 only: the panes are camera-synced (see
+  // viewer.tsx), so moving one moves both.
+  const mapInstance = panes[0].mapInstance
+
+  const handleZone = (zone: Zone) => {
+    if (mapInstance) {
+      mapInstance.fitBounds(
+        zoneBounds(zone, mapInstance.getCenter().lng),
+        {
+          // Left padding clears the sidebar so the fitted zone isn't half
+          // hidden under it.
+          padding: { top: 60, bottom: 60, left: 400, right: 60 },
+          duration: 800,
+          // fitBounds otherwise skips the animation under prefers-reduced-motion,
+          // which reads as an unexplained jump cut rather than a pan.
+          essential: true,
+        },
+      )
+    }
+    run(zone, zoneGeometry(zone))
+  }
 
   const handleSeries = (geometry: QueryGeometry, label: string) => {
     if (seriesLoading) return
@@ -213,7 +239,9 @@ export default function QueryPanel() {
               disabled={queryInFlight}
               sx={{
                 ...buttonSx,
-                borderColor: activeZone?.label === zone.label ? 'text' : 'muted',
+                borderColor:
+                  activeZone?.label === zone.label ? 'primary' : 'muted',
+                color: activeZone?.label === zone.label ? 'primary' : 'text',
               }}
             >
               {zone.label}
@@ -270,6 +298,31 @@ export default function QueryPanel() {
       {seriesDim0 && seriesLength0 > 1 && (
         <Box sx={{ mt: 4 }}>
           <Label value={seriesLabel ?? undefined}>Series</Label>
+          {/* The chart fits its y-axis to the data by default, which makes a
+              small wobble look dramatic. This re-anchors it at zero. */}
+          {!diffMode && (
+            <UILabel
+              sx={{
+                width: 'auto',
+                flexShrink: 0,
+                fontFamily: 'mono',
+                fontSize: 0,
+                letterSpacing: 'mono',
+                textTransform: 'uppercase',
+                color: 'secondary',
+                alignItems: 'center',
+                cursor: 'pointer',
+                mb: 2,
+              }}
+            >
+              <Checkbox
+                checked={zeroAnchored}
+                onChange={(e) => setZeroAnchored(e.target.checked)}
+                sx={{ color: 'text', mr: 1 }}
+              />
+              Y axis from zero
+            </UILabel>
+          )}
           {diffMode ? (
             <Text sx={{ ...captionSx, display: 'block', lineHeight: 1.5 }}>
               A difference is computed one step at a time, so it has no series.

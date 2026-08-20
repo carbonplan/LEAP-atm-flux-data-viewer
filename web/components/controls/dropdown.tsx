@@ -26,8 +26,10 @@ export default function Dropdown(props: ComponentProps<typeof Select>) {
         py: 2,
         cursor: 'pointer',
         transition: 'border-color 0.15s',
-        '&:hover': { borderColor: 'text' },
-        '&:focus': { outline: 'none', borderColor: 'text' },
+        '&:hover': { borderColor: 'primary' },
+        // No ring: the border carries the focus state, in the brand accent.
+        '&:focus': { outline: 'none', borderColor: 'primary' },
+        '&:focus-visible': { outline: 'none', borderColor: 'primary' },
         // Honoured on Windows/Linux; macOS draws the menu with OS chrome.
         '& option, & optgroup': { bg: 'background', color: 'text' },
         ...props.sx,
