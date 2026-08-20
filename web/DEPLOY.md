@@ -21,8 +21,9 @@ preset is wrong.
 | `JWT_SECRET` | random hex, e.g. `openssl rand -hex 32` |
 | `USER_PASSWORD` | the password handed out to viewers |
 
-Add them under Project -> Settings -> Environment Variables. Set all three for
-Production and Preview.
+Add them under Project -> Settings -> Environments -> Production (and again
+for Preview); the Environment Variables editor lives inside each environment,
+not as its own settings page.
 
 `NEXT_PUBLIC_ICECHUNK_URL` is not a secret — leave the sensitive/lock toggle
 off so the value stays readable. `JWT_SECRET` and `USER_PASSWORD` are
