@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import type { QueryGeometry } from '@carbonplan/zarr-layer'
 import { Box, Button, Checkbox, Flex, Label as UILabel, Text } from 'theme-ui'
 import { formatValue, units } from '@/lib/config'
 import {
@@ -12,7 +13,10 @@ import {
   type Zone,
 } from '@/lib/query'
 import { useAppStore } from '@/lib/store'
+import { valueKey } from '@/lib/diff'
+import { seriesDim, seriesLength } from '@/lib/series'
 import Label from '@/components/controls/label'
+import SeriesChart from '@/components/controls/series-chart'
 
 const readoutSx = {
   fontFamily: 'mono',
@@ -52,13 +56,25 @@ const buttonSx = {
 export default function QueryPanel() {
   const arrays = useAppStore((s) => s.arrays)
   const panes = useAppStore((s) => s.panes)
-  const compare = useAppStore((s) => s.compare)
+  const compare = useAppStore((s) => s.mode === 'compare')
   const queryRegion = useAppStore((s) => s.queryRegion)
   const clearResults = useAppStore((s) => s.clearResults)
   const hoverQueryEnabled = useAppStore((s) => s.hoverQueryEnabled)
   const setHoverQueryEnabled = useAppStore((s) => s.setHoverQueryEnabled)
   const setPointResult = useAppStore((s) => s.setPointResult)
   const [queryInFlight, setQueryInFlight] = useState(false)
+  const querySeries = useAppStore((s) => s.querySeries)
+  const clearSeries = useAppStore((s) => s.clearSeries)
+  const seriesLoading = useAppStore((s) => s.seriesLoading)
+  const seriesLabel = useAppStore((s) => s.seriesLabel)
+  const lastPoint = useAppStore((s) => s.lastPoint)
+  const diffMode = useAppStore((s) => s.mode === 'diff')
+  // The geometry the region readout came from, so a series can re-run it over
+  // the whole axis without the reader re-picking the region.
+  const [regionGeometry, setRegionGeometry] = useState<QueryGeometry | null>(
+    null,
+  )
+  const [regionLabel, setRegionLabel] = useState<string>('')
   // In the store rather than local state: map-view draws the same zone.
   const activeZone = useAppStore((s) => s.activeZone)
   const setActiveZone = useAppStore((s) => s.setActiveZone)
@@ -69,16 +85,25 @@ export default function QueryPanel() {
       live.map((i) => {
         const pane = panes[i]
         const variable = arrays.find((a) => a.path === pane.variable)
+        const other = arrays.find((a) => a.path === pane.diffWith)
         const fillValue = pane.zarrLayer?.fillValue ?? Number.NaN
+        // A difference is filed under its own key, not under A's path.
+        const key = valueKey(pane)
         return {
           i,
           variable,
+          // Units are A's; the subtraction is unit-preserving by construction.
           unit: variable ? units(variable) : '',
+          name: variable
+            ? other
+              ? `${variable.name} \u2212 ${other.name}`
+              : variable.name
+            : '—',
           point: variable
-            ? getPointValue(pane.pointResult, variable.path, fillValue)
+            ? getPointValue(pane.pointResult, key, fillValue)
             : null,
           region: variable
-            ? getRegionStats(pane.regionResult, variable.path, fillValue)
+            ? getRegionStats(pane.regionResult, key, fillValue)
             : null,
         }
       }),
@@ -91,6 +116,8 @@ export default function QueryPanel() {
     if (queryInFlight) return
     setQueryInFlight(true)
     setActiveZone(zone)
+    setRegionGeometry(geometry)
+    setRegionLabel(zone?.label ?? 'Viewport')
     try {
       await queryRegion(geometry)
     } finally {
@@ -100,6 +127,11 @@ export default function QueryPanel() {
 
   const handleZone = (zone: Zone) => run(zone, zoneGeometry(zone))
 
+  const handleSeries = (geometry: QueryGeometry, label: string) => {
+    if (seriesLoading) return
+    querySeries(geometry, label)
+  }
+
   const handleViewport = () => {
     const map = panes[0].mapInstance
     const bounds = map?.getBounds()
@@ -108,6 +140,14 @@ export default function QueryPanel() {
   }
 
   if (rows.every((r) => !r.variable)) return null
+
+  // Pane 0 decides whether a series is offered at all; in compare mode both
+  // panes sit in the same group and share the axis.
+  const seriesDim0 = seriesDim(rows[0].variable)
+  const seriesLength0 =
+    rows[0].variable && seriesDim0
+      ? seriesLength(rows[0].variable, seriesDim0)
+      : 0
 
   const hasPoint = rows.some((r) => r.point !== null)
 
@@ -151,7 +191,7 @@ export default function QueryPanel() {
           <Flex key={r.i} sx={{ justifyContent: 'space-between', mb: 1 }}>
             <Box sx={captionSx}>
               {paneName(r.i)}
-              {r.variable?.name ?? '—'}
+              {r.name}
             </Box>
             <Box sx={readoutSx}>
               {r.point !== null
@@ -192,7 +232,7 @@ export default function QueryPanel() {
           <Box key={r.i} sx={{ mb: 2 }}>
             <Box sx={captionSx}>
               {paneName(r.i)}
-              {r.variable?.name ?? '—'}
+              {r.name}
             </Box>
             {r.region ? (
               <Box sx={readoutSx}>
@@ -226,6 +266,65 @@ export default function QueryPanel() {
           </Button>
         )}
       </Box>
+
+      {seriesDim0 && seriesLength0 > 1 && (
+        <Box sx={{ mt: 4 }}>
+          <Label value={seriesLabel ?? undefined}>Series</Label>
+          {diffMode ? (
+            <Text sx={{ ...captionSx, display: 'block', lineHeight: 1.5 }}>
+              A difference is computed one step at a time, so it has no series.
+              Leave diff mode to chart either variable on its own.
+            </Text>
+          ) : (
+            <>
+              <Flex sx={{ flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                <Button
+                  onClick={() =>
+                    regionGeometry && handleSeries(regionGeometry, regionLabel)
+                  }
+                  disabled={!regionGeometry || seriesLoading}
+                  sx={buttonSx}
+                >
+                  Over region
+                </Button>
+                <Button
+                  onClick={() =>
+                    lastPoint &&
+                    handleSeries(
+                      { type: 'Point', coordinates: lastPoint },
+                      `${lastPoint[1].toFixed(1)}, ${lastPoint[0].toFixed(1)}`,
+                    )
+                  }
+                  disabled={!lastPoint || seriesLoading}
+                  sx={buttonSx}
+                >
+                  At point
+                </Button>
+                {seriesLabel && !seriesLoading && (
+                  <Button onClick={clearSeries} sx={buttonSx}>
+                    Clear
+                  </Button>
+                )}
+              </Flex>
+
+              {seriesLoading ? (
+                <Box sx={readoutSx}>{`reading ${seriesLength0} steps…`}</Box>
+              ) : (
+                <SeriesChart />
+              )}
+
+              <Text
+                sx={{ ...captionSx, display: 'block', mt: 2, lineHeight: 1.5 }}
+              >
+                {seriesLabel
+                  ? 'Drag across the chart to move the map to that step.'
+                  : `Pick a region or click the map first. Each step is a separate
+                     read, so ${seriesLength0} of them takes a while the first time.`}
+              </Text>
+            </>
+          )}
+        </Box>
+      )}
 
       <Text sx={{ ...captionSx, display: 'block', mt: 2, lineHeight: 1.5 }}>
         Region means are weighted by cos(latitude); min and max are not.

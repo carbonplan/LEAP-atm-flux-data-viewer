@@ -14,8 +14,20 @@ import {
   isSpatial,
   renderable,
 } from '@/lib/config'
+import { sameUnits } from '@/lib/diff'
+import { geometryKey, seriesDim, seriesLength, seriesSelector } from '@/lib/series'
 
-export type Selector = Record<string, { selected: number; type: 'index' }>
+export type Selector = Record<
+  string,
+  { selected: number | number[]; type: 'index' }
+>
+
+/**
+ * `compare` puts two maps side by side; `diff` keeps one map and renders
+ * A minus B, which is the form the cloud-radiative-effect questions actually
+ * take ("how much longwave do clouds trap?").
+ */
+export type ViewMode = 'single' | 'compare' | 'diff'
 
 /**
  * One map pane. Lab 1 Task 2 ("compare your January albedo and January SW
@@ -30,11 +42,19 @@ export interface PaneState {
   indices: Record<string, number>
   /** opt-in override for a variable whose chunks exceed MAX_CHUNK_MB */
   force: boolean
+  /**
+   * In `diff` mode, the path of the variable subtracted from `variable`.
+   * `variable` stays a real array either way, so dim sliders, time labels and
+   * every other `ArrayMeta` lookup keep working untouched.
+   */
+  diffWith: string | null
   status: string
   mapInstance: maplibregl.Map | null
   zarrLayer: ZarrLayer | null
   pointResult: QueryResult | null
   regionResult: QueryResult | null
+  /** Every index along the series dimension for the last series query. */
+  seriesResult: QueryResult | null
 }
 
 interface AppState {
@@ -45,7 +65,7 @@ interface AppState {
 
   // panes[0] is always live; panes[1] renders only in compare mode
   panes: [PaneState, PaneState]
-  compare: boolean
+  mode: ViewMode
   /** Keep the time/month index in step across panes (the Task 2 case). */
   linkTime: boolean
   /** Escape hatch out of the LAB_VARS allowlist. */
@@ -53,6 +73,11 @@ interface AppState {
   hoverQueryEnabled: boolean
   /** Zone currently drawn on the map, and whose stats are on screen. */
   activeZone: Zone | null
+  /** What the on-screen series covers, and whether one is in flight. */
+  seriesLabel: string | null
+  seriesLoading: boolean
+  /** Last point queried, so a series can be run at the same pixel. */
+  lastPoint: [number, number] | null
 
   setArrays: (arrays: ArrayMeta[]) => void
   setStoreReady: (ready: boolean) => void
@@ -69,7 +94,8 @@ interface AppState {
   setZarrLayer: (pane: number, layer: ZarrLayer | null) => void
   setPointResult: (pane: number, result: QueryResult | null) => void
   setRegionResult: (pane: number, result: QueryResult | null) => void
-  setCompare: (compare: boolean) => void
+  setMode: (mode: ViewMode) => void
+  setDiffWith: (path: string | null) => void
   setLinkTime: (linkTime: boolean) => void
   setShowAll: (showAll: boolean) => void
   setHoverQueryEnabled: (enabled: boolean) => void
@@ -82,6 +108,12 @@ interface AppState {
     options?: { signal?: AbortSignal },
   ) => Promise<void>
   queryRegion: (geometry: QueryGeometry) => Promise<void>
+  /**
+   * Reduce the same geometry once per index along the series dimension. One
+   * `queryData` call per pane, with the whole axis selected.
+   */
+  querySeries: (geometry: QueryGeometry, label: string) => Promise<void>
+  clearSeries: () => void
 }
 
 function emptyPane(): PaneState {
@@ -91,12 +123,29 @@ function emptyPane(): PaneState {
     colormap: 'warm',
     indices: {},
     force: false,
+    diffWith: null,
     status: '',
     mapInstance: null,
     zarrLayer: null,
     pointResult: null,
     regionResult: null,
+    seriesResult: null,
   }
+}
+
+/**
+ * Variables that can be subtracted from `a`: same dataset group, same units,
+ * and not `a` itself. Mixing units (albedo minus W m-2) is meaningless, so the
+ * B dropdown is filtered rather than merely warned about.
+ */
+export function diffCandidates(arrays: ArrayMeta[], a: ArrayMeta): ArrayMeta[] {
+  return arrays.filter(
+    (v) =>
+      v.group === a.group &&
+      v.path !== a.path &&
+      renderable(v) &&
+      sameUnits(a, v),
+  )
 }
 
 /** Reset clim, colormap and dim indices to whatever suits `v`. */
@@ -111,8 +160,10 @@ function derivedFor(v: ArrayMeta) {
     colormap: defaultColormap(v),
     indices,
     force: false,
+    diffWith: null,
     pointResult: null,
     regionResult: null,
+    seriesResult: null,
   }
 }
 
@@ -126,7 +177,7 @@ export const useAppStore = create<AppState>((set, get) => {
     })
 
   /** Panes that currently have a map on screen. */
-  const livePanes = (s: AppState) => (s.compare ? [0, 1] : [0])
+  const livePanes = (s: AppState) => (s.mode === 'compare' ? [0, 1] : [0])
 
   return {
     arrays: [],
@@ -134,11 +185,14 @@ export const useAppStore = create<AppState>((set, get) => {
     error: null,
 
     panes: [emptyPane(), emptyPane()],
-    compare: false,
+    mode: 'single',
     linkTime: true,
     showAll: false,
     hoverQueryEnabled: false,
     activeZone: null,
+    seriesLabel: null,
+    seriesLoading: false,
+    lastPoint: null,
 
     setArrays: (arrays) => {
       // Prefer a lab variable as the landing view; fall back to anything
@@ -167,9 +221,19 @@ export const useAppStore = create<AppState>((set, get) => {
     setStatus: (pane, status) => patch(pane, { status }),
 
     setVariable: (pane, path) => {
-      const v = get().arrays.find((a) => a.path === path)
+      const { arrays, panes, mode } = get()
+      const v = arrays.find((a) => a.path === path)
       if (!v) return
       patch(pane, derivedFor(v))
+      // derivedFor clears diffWith. In diff mode, re-seed it: keep the same B
+      // if it still measures the same thing, otherwise pick a fresh partner.
+      if (pane !== 0 || mode !== 'diff') return
+      const candidates = diffCandidates(arrays, v)
+      const next =
+        candidates.find((c) => c.path === panes[0].diffWith) ??
+        candidates.find(isLabVar) ??
+        candidates[0]
+      if (next) get().setDiffWith(next.path)
     },
 
     setGroup: (group) => {
@@ -181,7 +245,16 @@ export const useAppStore = create<AppState>((set, get) => {
       const next = panes.map((p) => {
         const leaf = arrays.find((a) => a.path === p.variable)?.name
         const match = inGroup.find((a) => a.name === leaf) ?? inGroup[0]
-        return { ...p, ...derivedFor(match) }
+        // derivedFor drops diffWith, so carry B across by leaf name too.
+        const bLeaf = arrays.find((a) => a.path === p.diffWith)?.name
+        const b = bLeaf ? inGroup.find((a) => a.name === bLeaf) : undefined
+        return {
+          ...p,
+          ...derivedFor(match),
+          ...(b && sameUnits(match, b)
+            ? { diffWith: b.path, colormap: 'redteal' }
+            : {}),
+        }
       }) as [PaneState, PaneState]
       set({ panes: next })
     },
@@ -212,7 +285,61 @@ export const useAppStore = create<AppState>((set, get) => {
     setPointResult: (pane, pointResult) => patch(pane, { pointResult }),
     setRegionResult: (pane, regionResult) => patch(pane, { regionResult }),
 
-    setCompare: (compare) => set({ compare }),
+    setMode: (mode) => {
+      if (mode !== 'diff') {
+        // Leaving diff: the symmetric range and diverging ramp belonged to the
+        // difference, not to A, so put A's own defaults back.
+        set((s) => {
+          const a = s.arrays.find((v) => v.path === s.panes[0].variable)
+          return {
+            mode,
+            panes: [
+              {
+                ...s.panes[0],
+                diffWith: null,
+                ...(s.panes[0].diffWith && a
+                  ? { clim: defaultClim(a), colormap: defaultColormap(a) }
+                  : {}),
+              },
+              s.panes[1],
+            ] as [PaneState, PaneState],
+          }
+        })
+        return
+      }
+      set((s) => ({ mode, panes: s.panes }))
+      // Seed B from the compare pane when it is subtractable, so switching
+      // modes keeps the pair the reader already picked.
+      const { panes, arrays } = get()
+      const a = arrays.find((v) => v.path === panes[0].variable)
+      if (!a) return
+      const candidates = diffCandidates(arrays, a)
+      const seed =
+        candidates.find((v) => v.path === panes[1].variable) ??
+        candidates.find(isLabVar) ??
+        candidates[0]
+      if (seed) get().setDiffWith(seed.path)
+    },
+
+    setDiffWith: (path) => {
+      if (path === null) {
+        patch(0, { diffWith: null })
+        return
+      }
+      const { arrays, panes } = get()
+      const a = arrays.find((v) => v.path === panes[0].variable)
+      const b = arrays.find((v) => v.path === path)
+      if (!a || !b || !sameUnits(a, b)) return
+      // A difference straddles zero by construction, so it only reads on a
+      // diverging ramp. clim is replaced once the field has been computed.
+      patch(0, {
+        diffWith: path,
+        colormap: 'redteal',
+        pointResult: null,
+        regionResult: null,
+        seriesResult: null,
+      })
+    },
     setLinkTime: (linkTime) => set({ linkTime }),
     setShowAll: (showAll) => set({ showAll }),
     setHoverQueryEnabled: (hoverQueryEnabled) => set({ hoverQueryEnabled }),
@@ -221,16 +348,28 @@ export const useAppStore = create<AppState>((set, get) => {
     clearResults: () =>
       set((s) => ({
         activeZone: null,
+        seriesLabel: null,
         panes: s.panes.map((p) => ({
           ...p,
           pointResult: null,
           regionResult: null,
+          seriesResult: null,
         })) as [PaneState, PaneState],
+      })),
+
+    clearSeries: () =>
+      set((s) => ({
+        seriesLabel: null,
+        panes: s.panes.map((p) => ({ ...p, seriesResult: null })) as [
+          PaneState,
+          PaneState,
+        ],
       })),
 
     queryPoint: async (lngLat, options) => {
       const s = get()
       const geometry: QueryGeometry = { type: 'Point', coordinates: lngLat }
+      set({ lastPoint: lngLat })
       await Promise.all(
         livePanes(s).map(async (i) => {
           const layer = s.panes[i].zarrLayer
@@ -238,7 +377,7 @@ export const useAppStore = create<AppState>((set, get) => {
           try {
             const result = await layer.queryData(
               geometry,
-              toSelector(s.panes[i].indices),
+              paneSelector(s.panes[i]),
               options,
             )
             if (!options?.signal?.aborted) get().setPointResult(i, result)
@@ -259,7 +398,7 @@ export const useAppStore = create<AppState>((set, get) => {
           try {
             const result = await layer.queryData(
               geometry,
-              toSelector(s.panes[i].indices),
+              paneSelector(s.panes[i]),
               { includeSpatialCoordinates: true },
             )
             get().setRegionResult(i, result)
@@ -270,14 +409,100 @@ export const useAppStore = create<AppState>((set, get) => {
         }),
       )
     },
+
+    querySeries: async (geometry, label) => {
+      // One in flight at a time: on the monthly group a series is 313 chunk
+      // reads, so leaving an abandoned one running would double the traffic
+      // every time the reader changes their mind about the region.
+      seriesAbort?.abort()
+      const controller = new AbortController()
+      seriesAbort = controller
+
+      const s = get()
+      set({ seriesLoading: true, seriesLabel: label })
+      try {
+        await Promise.all(
+          livePanes(s).map(async (i) => {
+            const pane = s.panes[i]
+            const layer = pane.zarrLayer
+            const v = s.arrays.find((a) => a.path === pane.variable)
+            const dim = seriesDim(v)
+            // A diff layer is a single precomputed slice with no series
+            // dimension left to walk.
+            if (!layer || !v || !dim || pane.diffWith) return
+            const length = seriesLength(v, dim)
+            if (length < 2) return
+
+            const key = `${pane.variable}|${dim}|${JSON.stringify(
+              pane.indices,
+            )}|${geometryKey(geometry)}`
+            try {
+              const result = await cachedSeries(key, () =>
+                layer.queryData(
+                  geometry,
+                  seriesSelector(pane.indices, dim, length),
+                  {
+                    includeSpatialCoordinates: true,
+                    signal: controller.signal,
+                  },
+                ),
+              )
+              if (controller.signal.aborted) return
+              patch(i, { seriesResult: result })
+            } catch (err) {
+              if (controller.signal.aborted) return
+              console.warn('Series query failed', err)
+              patch(i, { seriesResult: null })
+            }
+          }),
+        )
+      } finally {
+        if (seriesAbort === controller) {
+          seriesAbort = null
+          set({ seriesLoading: false })
+        }
+      }
+    },
   }
 })
 
-/** Panes with a map on screen: [0] alone, or [0, 1] in compare mode. */
-export const usePaneIndices = () =>
-  useAppStore((s) => (s.compare ? PANES_BOTH : PANES_ONE))
-const PANES_ONE = [0]
-const PANES_BOTH = [0, 1]
+let seriesAbort: AbortController | null = null
+
+/**
+ * LRU over completed series, keyed by variable + pinned indices + geometry.
+ * Re-picking a region already queried is free, which matters when the query
+ * behind it is hundreds of ranged reads. Same shape as the slice cache in
+ * `lib/diff.ts`.
+ */
+const seriesCache = new Map<string, QueryResult>()
+const SERIES_CACHE_MAX = 12
+
+async function cachedSeries(
+  key: string,
+  run: () => Promise<QueryResult>,
+): Promise<QueryResult> {
+  const hit = seriesCache.get(key)
+  if (hit) {
+    // Re-insert so eviction below is LRU rather than insertion-order.
+    seriesCache.delete(key)
+    seriesCache.set(key, hit)
+    return hit
+  }
+  const result = await run()
+  seriesCache.set(key, result)
+  if (seriesCache.size > SERIES_CACHE_MAX) {
+    seriesCache.delete(seriesCache.keys().next().value as string)
+  }
+  return result
+}
+
+/**
+ * The selector to query a pane's layer with. A difference layer is a single
+ * lat/lon slice with the dimension already applied, so it takes none.
+ */
+function paneSelector(pane: PaneState): Selector {
+  return pane.diffWith ? {} : toSelector(pane.indices)
+}
 
 /** Shape the flat index map into the selector zarr-layer expects. */
 export function toSelector(indices: Record<string, number>): Selector {

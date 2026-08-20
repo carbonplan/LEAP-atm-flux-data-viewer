@@ -20,7 +20,7 @@ export default function DimSliders() {
   const variable = useAppStore((s) => s.panes[0].variable)
   const indices = useAppStore((s) => s.panes[0].indices)
   const setIndex = useAppStore((s) => s.setIndex)
-  const compare = useAppStore((s) => s.compare)
+  const compare = useAppStore((s) => s.mode === 'compare')
   const linkTime = useAppStore((s) => s.linkTime)
   const setLinkTime = useAppStore((s) => s.setLinkTime)
   const paneB = useAppStore((s) => s.panes[1])

@@ -111,5 +111,3 @@ export function formatTimeIndex(
   }
   return null
 }
-
-export const isTimeDim = (d: string) => /^(time|t)$/i.test(d)

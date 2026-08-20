@@ -1,10 +1,10 @@
 import type { ArrayMeta } from '@/lib/store-schema'
 
-// Empty until the CERES icechunk store is published. See .env.local.example.
+// Unset falls back to the placeholder empty state. See .env.local.example.
 export const STORE_URL = process.env.NEXT_PUBLIC_ICECHUNK_URL ?? ''
 
 export const INTENDED_STORE_URL =
-  'https://nyu1.osn.mghpcc.org/leap-pangeo-pipeline/CERES_EBAF/store_auto_clim.icechunk'
+  'https://storage.googleapis.com/leap-public/data/CERES_EBAF/store.icechunk'
 
 // zarr-layer fetches whole chunks, so a variable chunked as one big block would
 // pull the entire array on first paint. Matches the LEAP catalog's guard.

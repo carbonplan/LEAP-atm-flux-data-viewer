@@ -60,17 +60,6 @@ export function layerHint(
   return hint.clim || hint.colormap ? hint : undefined
 }
 
-export function dimsFromArrays(arrays: ArrayMeta[]): Record<string, number> {
-  const dims: Record<string, number> = {}
-  for (const a of arrays) {
-    a.dims.forEach((d, i) => {
-      if (d && dims[d] === undefined && a.shape[i] !== undefined)
-        dims[d] = a.shape[i]
-    })
-  }
-  return dims
-}
-
 // Open an icechunk store; caller reuses it for both schema and the map layer.
 export async function openIcechunkStore(
   httpUrl: string,

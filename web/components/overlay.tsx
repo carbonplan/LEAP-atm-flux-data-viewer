@@ -14,11 +14,17 @@ export default function Overlay({ pane }: { pane: number }) {
   const force = useAppStore((s) => s.panes[pane].force)
   const storeReady = useAppStore((s) => s.storeReady)
   const arrays = useAppStore((s) => s.arrays)
-  const compare = useAppStore((s) => s.compare)
+  const compare = useAppStore((s) => s.mode === 'compare')
   const variable = useAppStore((s) => s.panes[pane].variable)
+  const diffWith = useAppStore((s) => s.panes[pane].diffWith)
   const current = useMemo(
     () => arrays.find((a) => a.path === variable),
     [arrays, variable],
+  )
+
+  const other = useMemo(
+    () => arrays.find((a) => a.path === diffWith),
+    [arrays, diffWith],
   )
 
   const swatch = useThemedColormap(colormapName, { format: 'hex' }) as string[]
@@ -82,7 +88,7 @@ export default function Overlay({ pane }: { pane: number }) {
             minWidth: '220px',
           }}
         >
-          {compare && (
+          {(compare || other) && (
             <Box
               sx={{
                 fontFamily: 'mono',
@@ -92,7 +98,9 @@ export default function Overlay({ pane }: { pane: number }) {
                 mb: 1,
               }}
             >
-              {pane === 0 ? 'A' : 'B'} · {current.name}
+              {other
+                ? `${current.name} \u2212 ${other.name}`
+                : `${pane === 0 ? 'A' : 'B'} \u00b7 ${current.name}`}
             </Box>
           )}
           <Flex sx={{ height: '8px', mb: 1 }}>

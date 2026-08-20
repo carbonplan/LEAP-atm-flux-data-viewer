@@ -74,7 +74,7 @@ export default function Viewer() {
   const setStoreReady = useAppStore((s) => s.setStoreReady)
   const setError = useAppStore((s) => s.setError)
   const setStatus = useAppStore((s) => s.setStatus)
-  const compare = useAppStore((s) => s.compare)
+  const compare = useAppStore((s) => s.mode === 'compare')
   const mapA = useAppStore((s) => s.panes[0].mapInstance)
   const mapB = useAppStore((s) => s.panes[1].mapInstance)
 

@@ -8,6 +8,7 @@ import { layers, namedFlavor } from '@protomaps/basemaps'
 import { useThemedColormap } from '@carbonplan/colormaps'
 import { chunkMB, MAX_CHUNK_MB } from '@/lib/config'
 import { loadGeographicBounds, resolveCrs } from '@/lib/crs'
+import { computeDiff, DIFF_PATH, diffStore } from '@/lib/diff'
 import { getStore } from '@/lib/icechunk'
 import { zoneMaskGeometry, zoneOutlineGeometry } from '@/lib/query'
 import { toSelector, useAppStore } from '@/lib/store'
@@ -54,8 +55,12 @@ const PMTILES =
   'pmtiles://https://carbonplan-maps.s3.us-west-2.amazonaws.com/basemaps/pmtiles/global.pmtiles'
 
 const LAYER_ID = 'ceres-zarr'
+// First symbol (label) layer in the protomaps style. The data layer is
+// always inserted with beforeId: LABELS_ID so place labels stay readable
+// above the opaque data raster, with the coastline stroke above both.
+const LABELS_ID = 'address_label'
 // Persistent coastline stroke, kept above the data layer (which is always
-// inserted with beforeId: COASTLINE_ID) so land/ocean separation survives
+// inserted with beforeId: LABELS_ID) so land/ocean separation survives
 // the opaque data raster.
 const COASTLINE_ID = 'ceres-coastline'
 function coastlineLayer(dark: boolean): maplibregl.LayerSpecification {
@@ -136,6 +141,10 @@ export default function MapView({
   // is briefly two: the outgoing one stays until the incoming one has painted.
   const layerIdsRef = useRef<string[]>([])
   const loadingRef = useRef(false)
+  // The (A, B) pair the color range was last derived for. A new pair earns a
+  // fresh symmetric range; a new time step must not, or the ramp would jump
+  // under the reader on every slider move.
+  const climPairRef = useRef<string | null>(null)
   const pendingIndicesRef = useRef<Record<string, number> | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [styleEpoch, setStyleEpoch] = useState(0)
@@ -149,6 +158,8 @@ export default function MapView({
   const colormapName = useAppStore((s) => s.panes[pane].colormap)
   const indices = useAppStore((s) => s.panes[pane].indices)
   const force = useAppStore((s) => s.panes[pane].force)
+  const diffWith = useAppStore((s) => s.panes[pane].diffWith)
+  const setClim = useAppStore((s) => s.setClim)
   const setStatus = useAppStore((s) => s.setStatus)
   const setMapInstance = useAppStore((s) => s.setMapInstance)
   const setZarrLayer = useAppStore((s) => s.setZarrLayer)
@@ -162,10 +173,21 @@ export default function MapView({
     () => arrays.find((a) => a.path === variable),
     [arrays, variable],
   )
+  const other = useMemo(
+    () => (diffWith ? arrays.find((a) => a.path === diffWith) : undefined),
+    [arrays, diffWith],
+  )
+  // A difference shares A's grid, so A's CRS and bounds describe it exactly.
   const crsInfo = useMemo(
     () => (current ? resolveCrs(current, arrays) : null),
     [current, arrays],
   )
+  // The synthetic difference array is a single 2-D slice, so a dimension change
+  // has to rebuild the layer rather than go through setSelector.
+  const diffKey =
+    other && current
+      ? `${current.path}|${other.path}|${JSON.stringify(indices)}`
+      : null
   const oversized = Boolean(current && chunkMB(current) > MAX_CHUNK_MB && !force)
 
   // Init map once.
@@ -275,6 +297,28 @@ export default function MapView({
           (await loadGeographicBounds(store, crsInfo.coordPaths))
         if (stale || !mapRef.current) return
 
+        // Difference mode: subtract in JS and hand zarr-layer the result as an
+        // ordinary variable, since one layer can only ever sample one array.
+        let layerStore = store as typeof store
+        let layerVariable = current.path
+        let layerSelector = toSelector(indices)
+        let layerClim = clim
+        if (other) {
+          const slice = await computeDiff(store, current, other, indices)
+          if (stale || !mapRef.current) return
+          layerStore = diffStore(store, slice.entries) as typeof store
+          layerVariable = DIFF_PATH
+          layerSelector = {}
+          const pair = `${current.path}|${other.path}`
+          if (climPairRef.current !== pair) {
+            climPairRef.current = pair
+            layerClim = slice.clim
+            setClim(pane, slice.clim)
+          }
+        } else {
+          climPairRef.current = null
+        }
+
         // Keep the old layer on screen until the new one has actually
         // painted. Removing it here (before any chunk has arrived) is what
         // used to flash the basemap through on every variable switch.
@@ -296,13 +340,13 @@ export default function MapView({
 
         const layer = new ZarrLayer({
           id,
-          store,
-          variable: current.path,
+          store: layerStore,
+          variable: layerVariable,
           zarrVersion: 3,
-          clim,
+          clim: layerClim,
           colormap,
           opacity: 1,
-          selector: toSelector(indices),
+          selector: layerSelector,
           spatialDimensions: crsInfo.spatialDimensions,
           bounds,
           latIsAscending: crsInfo.latIsAscending,
@@ -334,7 +378,7 @@ export default function MapView({
         })
         // beforeId puts the new layer above the outgoing one, and it paints
         // opaque, so the swap is invisible.
-        map.addLayer(layer, COASTLINE_ID)
+        map.addLayer(layer, LABELS_ID)
         layerRef.current = layer
         layerIdRef.current = id
         layerIdsRef.current = [...layerIdsRef.current, id]
@@ -362,7 +406,15 @@ export default function MapView({
     // clim/colormap/opacity/indices are applied by the cheap-update effects
     // below rather than by rebuilding the layer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady, storeReady, current?.path, crsInfo?.label, oversized, styleEpoch])
+  }, [
+    mapReady,
+    storeReady,
+    current?.path,
+    crsInfo?.label,
+    oversized,
+    styleEpoch,
+    diffKey,
+  ])
 
   // Drop the layer when the selected variable is too large to auto-render.
   useEffect(() => {
@@ -389,14 +441,16 @@ export default function MapView({
   // the newest value, which the load callback applies once the fetch lands.
   useEffect(() => {
     const layer = layerRef.current
-    if (!layer) return
+    // In difference mode the rendered array has no non-spatial dimensions;
+    // `diffKey` rebuilds the layer instead.
+    if (!layer || diffWith) return
     if (loadingRef.current) {
       pendingIndicesRef.current = indices
       return
     }
     pendingIndicesRef.current = null
     layer.setSelector?.(toSelector(indices))
-  }, [indices])
+  }, [indices, diffWith])
 
   // Draw the selected zone: a translucent mask over everything outside it,
   // plus its edge. Both panes draw the same zone, so A and B agree about what
