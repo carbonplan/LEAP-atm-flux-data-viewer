@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import { Box } from 'theme-ui'
 import { STORE_URL } from '@/lib/config'
 import EmptyState from '@/components/empty-state'
+import { withAuth } from '@/lib/auth'
 
 const Viewer = dynamic(() => import('@/components/viewer'), {
   ssr: false,
@@ -28,7 +29,7 @@ const Viewer = dynamic(() => import('@/components/viewer'), {
   ),
 })
 
-export default function Page() {
+function Page() {
   return (
     // Fixed, not absolute: an absolute root rides the document, and focusing
     // a native select near the bottom scrolls it out of view with no
@@ -38,3 +39,5 @@ export default function Page() {
     </Box>
   )
 }
+
+export default withAuth(Page, ['user'])

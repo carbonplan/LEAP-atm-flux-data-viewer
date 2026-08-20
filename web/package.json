@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@carbonplan/auth": "^1.2.0",
     "@carbonplan/colormaps": "^4.0.0",
     "@carbonplan/components": "^13.4.0",
     "@carbonplan/zarr-layer": "^0.8.0",
