@@ -30,6 +30,12 @@ off so the value stays readable. `JWT_SECRET` and `USER_PASSWORD` are
 server-only (never inlined into the client bundle), so leave the toggle on, and
 give production a different `JWT_SECRET` than any local `.env.local`.
 
+Scope matters: a preview deployment cannot read a Production-only variable.
+With `JWT_SECRET` unset, `/api/auth` returns
+`{"message":"server misconfigured: JWT_SECRET unset"}` and the login page
+shows that string, so a 500 on login means the vars are missing from the
+environment being deployed, not that the password is wrong.
+
 Env var changes do not apply to existing deployments. After editing them,
 redeploy from Deployments -> latest -> "..." -> Redeploy, with "Use existing
 Build Cache" unchecked.
