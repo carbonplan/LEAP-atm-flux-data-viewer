@@ -15,11 +15,13 @@
     "@carbonplan/zarr-layer": "^0.8.0",
     "@protomaps/basemaps": "^5.0.1",
     "icechunk-js": "^0.6.0",
+    "jsonwebtoken": "^8.5.1",
     "maplibre-gl": "^5.24.0",
     "next": "^16.2.6",
     "pmtiles": "^4.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "safe-compare": "^1.1.4",
     "theme-ui": "^0.17.4",
     "zarrita": "^0.7.3",
     "zustand": "^5.0.9"
