@@ -8,13 +8,14 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
 import { Box, Button, Heading, Input } from 'theme-ui'
 
-type Status = 'submitting' | 'authenticating' | 'invalid' | null
+type Status = 'submitting' | 'authenticating' | 'invalid' | 'error' | null
 
 const LoginForm = () => {
   const router = useRouter()
   const params = useSearchParams()
   const redirect = params?.get('redirect') || '/'
   const [status, setStatus] = useState<Status>(null)
+  const [error, setError] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const busy = status === 'submitting' || status === 'authenticating'
 
@@ -33,9 +34,20 @@ const LoginForm = () => {
       body: JSON.stringify({ password }),
       headers: { 'Content-Type': 'application/json' },
     })
-    if (res.status !== 200) {
+    // 403 is a rejected password; anything else is a server or routing fault
+    // and should say so rather than masquerade as a bad password.
+    if (res.status === 403) {
       setStatus('invalid')
       setTimeout(() => setStatus(null), 1000)
+      return
+    }
+    if (res.status !== 200) {
+      const message = await res
+        .json()
+        .then((b) => b.message)
+        .catch(() => null)
+      setError(message || `unexpected response (${res.status})`)
+      setStatus('error')
       return
     }
     const { token } = await res.json()
@@ -96,6 +108,11 @@ const LoginForm = () => {
           →
         </Button>
       </Box>
+      {error && (
+        <Box sx={{ color: 'red', fontFamily: 'mono', fontSize: [1], letterSpacing: 'mono' }}>
+          {error}
+        </Box>
+      )}
     </Box>
   )
 }
