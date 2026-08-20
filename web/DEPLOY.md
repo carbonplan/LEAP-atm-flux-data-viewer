@@ -18,9 +18,20 @@ preset is wrong.
 | Key | Value |
 | --- | --- |
 | `NEXT_PUBLIC_ICECHUNK_URL` | `https://storage.googleapis.com/leap-public/data/CERES_EBAF/store.icechunk` |
+| `JWT_SECRET` | random hex, e.g. `openssl rand -hex 32` |
+| `USER_PASSWORD` | the password handed out to viewers |
 
-Set for Production and Preview. Not a secret — leave the sensitive/lock toggle
-off so the value stays readable.
+Add them under Project -> Settings -> Environment Variables. Set all three for
+Production and Preview.
+
+`NEXT_PUBLIC_ICECHUNK_URL` is not a secret — leave the sensitive/lock toggle
+off so the value stays readable. `JWT_SECRET` and `USER_PASSWORD` are
+server-only (never inlined into the client bundle), so leave the toggle on, and
+give production a different `JWT_SECRET` than any local `.env.local`.
+
+Env var changes do not apply to existing deployments. After editing them,
+redeploy from Deployments -> latest -> "..." -> Redeploy, with "Use existing
+Build Cache" unchecked.
 
 `NEXT_PUBLIC_*` vars are inlined at build time, so the var must exist before
 the build runs. Changing it requires a redeploy. If it is missing,
@@ -29,6 +40,23 @@ the build runs. Changing it requires a redeploy. If it is missing,
 The store is read directly from the browser, so its host must send CORS headers
 for the deployed origin. The GCS mirror (`leap-public`) does; the OSN source
 does not.
+
+## Password auth
+
+The app is gated by `@carbonplan/auth` (see `lib/auth.tsx`, `app/login/`,
+`pages/api/auth.js`). Rotating the password is an env var change only, no code
+change:
+
+- Local: edit `USER_PASSWORD` in `web/.env.local`, restart the dev server.
+- Vercel: edit the var, then redeploy.
+
+Changing `USER_PASSWORD` alone does not invalidate tokens already issued —
+those stay valid until they expire (12h, set in `pages/api/auth.js`). Change
+`JWT_SECRET` too to log everyone out immediately.
+
+This gates the UI, not the data. The bundle and the Icechunk store
+(`NEXT_PUBLIC_ICECHUNK_URL`, a public GCS bucket) stay fetchable without a
+password.
 
 ## Custom domain
 
