@@ -137,18 +137,26 @@ export default function QueryPanel() {
 
   const handleZone = (zone: Zone) => {
     if (mapInstance) {
-      mapInstance.fitBounds(
-        zoneBounds(zone, mapInstance.getCenter().lng),
-        {
-          // Left padding clears the sidebar so the fitted zone isn't half
-          // hidden under it.
-          padding: { top: 60, bottom: 60, left: 400, right: 60 },
+      // Padding is clamped to the canvas: maplibre's camera solve fails when
+      // the padding leaves no room (it warns, returns undefined, and fitBounds
+      // then throws), which is narrow enough to miss on a wide window and to
+      // hit in compare mode, at browser zoom, or on a small screen.
+      const { width, height } = mapInstance.getCanvas().getBoundingClientRect()
+      const pad = Math.max(
+        0,
+        Math.min(60, Math.floor(width / 4), Math.floor(height / 4)),
+      )
+      try {
+        mapInstance.fitBounds(zoneBounds(zone, mapInstance.getCenter().lng), {
+          padding: pad,
           duration: 800,
           // fitBounds otherwise skips the animation under prefers-reduced-motion,
           // which reads as an unexplained jump cut rather than a pan.
           essential: true,
-        },
-      )
+        })
+      } catch {
+        // The camera is a nicety; the readout below is the point.
+      }
     }
     run(zone, zoneGeometry(zone))
   }
